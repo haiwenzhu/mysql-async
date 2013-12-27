@@ -18,6 +18,18 @@ You can install via Composer, add the following code to you composer.json:
 ```
 Or you can just include the file `src/Wrapper/MysqlAsync.php`
 
+##Description
+Class method description:
+```
+public mixed function MysqlAsync::query ( string $sql , callable $callback [ , callable $error_callback , mysqli $link ] )
+```
+MysqlAsync query use database link from a connection pool, and you can use your specific link.
+
+```
+public mixed function MysqlAsync::loop ( float $timeout )
+```
+This method return while all query is finished or timeout occured. return true when all query completed, false otherwise. 
+
 ##Usage
 ```php
 <?php
@@ -43,4 +55,3 @@ do {
 } while(!$done);
 */
 ```
-You can specific a timeout param for the `loop` method, which will return true when all query completed, otherwise return fasel.

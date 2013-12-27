@@ -1,4 +1,10 @@
 <?php
+/**
+ * MysqlAsync
+ * Provide a high level wrapper for asyncnorous MySQL query
+ * 
+ * @author haiwenzhu <bugwhen@gmail.com>
+ */
 
 namespace Wrapper;
 
@@ -12,19 +18,26 @@ class MysqlAsync
     private $_password;
     private $_dbname;
     private $_port;
+    
+    /**
+     * @var SplObjectStorage
+     */
     private $_connection_pool;
+    
+    /**
+     * @var SplObjectStorage
+     */
     private $_callback;
+    
     private $_timeout;
     private $_running;
 
-    const DB_CONNECTION_FREE = 0;
+    const DB_CONNECTION_IDLE = 0;
     const DB_CONNECTION_BUSY = 1;
     const TIMER_TICK = 0.01;
 
     public function __construct($host = null, $user = null, $password = null, $dbname = null, $port = null)
     {
-        $this->_timeout = null;
-        $this->_running = false;
         $this->_host = $host;
         $this->_user = $user;
         $this->_password = $password;
@@ -32,13 +45,82 @@ class MysqlAsync
         $this->_port = $port;
         $this->_connection_pool = new SplObjectStorage();
         $this->_callback = new SplObjectStorage();
+        $this->_timeout = null;
+        $this->_running = false;
+    }
+    
+    /**
+     * asynchornous query
+     *
+     * @param string $sql
+     * @param callable $callback
+     * @param callable $error_callback
+     * @param mysqli $db
+     * @return mixed
+     */
+    public function query($sql, $callback = null, $error_callback, $db = null)
+    {
+    	$db = empty($db) ? $this->_getDb() : $db;
+    	if (!empty($callback) && !is_callable($callback)) {
+    		trigger_error("param callback is not callable", E_USER_ERROR);
+    	}
+    	if (!empty($error_callback) && !is_callable($error_callback)) {
+    		trigger_error("param callback is not callable", E_USER_ERROR);
+    	}
+    	$this->_setCallback($db, $callback, $error_callback);
+    	return $db->query($sql, MYSQLI_ASYNC);
+    }
+    
+    /**
+     * run query
+     *
+     * @param float $timeout
+     * @return bool
+     */
+    public function loop($timeout = null)
+    {
+    	if ($this->_running) {
+    		return;
+    	}
+    	$this->_setTimeout($timeout);
+    	return $this->_loop();
+    }
+    
+    /**
+     * check the active query's result
+     * return true when all query completed, return false otherwise
+     * 
+     * @return bool
+     */
+    private function _loop()
+    {
+    	$this->_running = true;
+    	while (!$this->_getTimeout() && $this->_getActiveLinksCount() > 0) {
+    		$read = $error = $reject = $this->_getActiveLinks();
+    		if (mysqli::poll($read, $error, $reject, self::TIMER_TICK) === false) {
+    			trigger_error("mysql poll error", E_USER_ERROR);
+    		}
+    		array_walk($read, array($this, '_invokeCallback'));
+    		array_walk($error, array($this, '_invokeErrorCallback'));
+    	}
+    	$this->_running = false;
+    	return $this->_getActiveLinksCount() > 0 ? false : true;
     }
 
+    /**
+     * connect database
+     */
     public function connect($host = null, $user = null, $password = null, $dbname = null, $port = null)
     {
         return $this->_connect($host, $user, $password, $dbname, $port);
     }
 
+    /**
+     * connect database
+     * use default param when param is null
+     * 
+     * @return mysqli
+     */
     protected function _connect($host, $user, $password, $dbname, $port)
     {
         $host = $host !== null ? $host : ini_get('mysqli.default_host');
@@ -52,43 +134,11 @@ class MysqlAsync
         return $db;
     }
 
-    public function query($sql, $callback = null, $error_callback, $db = null)
-    {
-        $db = empty($db) ? $this->_getDb() : $db;
-        if (!empty($callback) && !is_callable($callback)) {
-            trigger_error("param callback is not callable", E_USER_ERROR);
-        }
-        if (!empty($error_callback) && !is_callable($error_callback)) {
-            trigger_error("param callback is not callable", E_USER_ERROR);
-        }
-        $this->_setCallback($db, $callback, $error_callback);
-        return $db->query($sql, MYSQLI_ASYNC);
-    }
-
-    public function loop($timeout = null)
-    {
-        if ($this->_running) {
-            return;
-        }
-        $this->_setTimeout($timeout);
-        return $this->_loop();
-    }
-
-    private function _loop()
-    {
-        $this->_running = true;
-        while (!$this->_getTimeout() && $this->_getActiveLinksCount() > 0) {
-            $read = $error = $reject = $this->_getActiveLinks();
-            if (mysqli::poll($read, $error, $reject, self::TIMER_TICK) === false) {
-                trigger_error("mysql poll error", E_USER_ERROR);
-            }
-            array_walk($read, array($this, '_invokeCallback'));
-            array_walk($error, array($this, '_invokeErrorCallback'));
-        }
-        $this->_running = false;
-        return $this->_getActiveLinksCount() > 0 ? false : true;
-    }
-
+    /**
+     * get database links which query is uncompleted
+     * 
+     * @return array
+     */
     private function _getActiveLinks()
     {
         $links = array();
@@ -98,6 +148,11 @@ class MysqlAsync
         return $links;
     }
 
+    /**
+     * get count of uncompleted database links
+     * 
+     * @return int
+     */
     private function _getActiveLinksCount()
     {
         $count = 0;
@@ -107,11 +162,19 @@ class MysqlAsync
         return $count;
     }
 
+    /**
+     * get current time
+     * 
+     * @return float
+     */
     private function _getTime()
     {
         return microtime(true);
     }
 
+    /**
+     * set time out for the loop action
+     */
     private function _setTimeout($timeout)
     {
         if (!empty($timeout)) {
@@ -119,6 +182,11 @@ class MysqlAsync
         }
     }
 
+    /**
+     * check timeout
+     * 
+     * @return bool
+     */
     private function _getTimeout()
     {
         $timeout = !empty($this->_timeout) ? $this->_getTime() > $this->_timeout : false;
@@ -128,6 +196,13 @@ class MysqlAsync
         return $timeout;
     }
 
+    /**
+     * set callback for a specific query
+     * 
+     * @param mysqli $link
+     * @param callable $callback
+     * @param callable $error_callback
+     */
     private function _setCallback($link, $callback, $error_callback)
     {
         $this->_callback[$link] = array($callback, $error_callback);
@@ -136,6 +211,9 @@ class MysqlAsync
         }
     }
 
+    /**
+     * invoke callback for a specific link
+     */
     private function _invokeCallback($link)
     {
         $result = $link->reap_async_query();
@@ -143,29 +221,35 @@ class MysqlAsync
             call_user_func($this->_callback[$link][0], $result);
             unset($this->_callback[$link]);
             if (isset($this->_connection_pool[$link])) {
-                $this->_connection_pool[$link] = self::DB_CONNECTION_FREE;
+                $this->_connection_pool[$link] = self::DB_CONNECTION_IDLE;
             }
         } else {
             $this->_invokeErrorCallback($link);
         }
     }
 
+    /**
+     * invoke error callback for a specific link
+     */
     private function _invokeErrorCallback($link)
     {
         if (!empty($this->_callback[$link][1])) {
             call_user_func($this->_callback[$link][1], $link->error, $link->errno);
             unset($this->_callback[$link]);
             if (isset($this->_connection_pool[$link])) {
-                $this->_connection_pool[$link] = self::DB_CONNECTION_FREE;
+                $this->_connection_pool[$link] = self::DB_CONNECTION_IDLE;
             }
         }
     }
 
+    /**
+     * get a idle database link from the connetion pool
+     */
     private function _getDb()
     {
         $db = null;
         foreach ($this->_connection_pool as $key => $val) {
-            if ($val === self::DB_CONNECTION_FREE) {
+            if ($val === self::DB_CONNECTION_IDLE) {
                 return $key;
             }
         }
