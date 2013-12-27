@@ -3,7 +3,7 @@ Asynchronous MySQL Wrapper
 
 ##Install
 You can install via Composer, add the following code to you composer.json:
-...
+```
 {
     "require": {
         "wrapper/mysql-async": "dev-master"
@@ -15,11 +15,11 @@ You can install via Composer, add the following code to you composer.json:
     }
     ]
 }
-...
+```
 Or you can just include the file `src/Wrapper/MysqlAsync.php`
 
 ##Usage
-...php
+```php
 <?php
 require('./src/Wrapper/MysqlAsync.php');
 
@@ -42,5 +42,5 @@ do {
     echo "do something else\n";
 } while(!$done);
 */
-...
+```
 You can specific a timeout param for the `loop` method, which will return true when all query completed, otherwise return fasel.
