@@ -21,11 +21,13 @@ Or you can just include the file `src/Wrapper/MysqlAsync.php`
 ##Description
 Class method description:
 - MysqlAsync::query
+
 ```
 public mixed function MysqlAsync::query ( string $sql , callable $callback [ , callable $error_callback , mysqli $link ] )
 ```
 MysqlAsync query use database link from a connection pool, and you can use your specific link.
 - MysqlAsync::loop
+
 ```
 public mixed function MysqlAsync::loop ( float $timeout )
 ```
