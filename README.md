@@ -32,7 +32,7 @@ MysqlAsync query use database link from a connection pool, and you can use your 
 mixed MysqlAsync::loop ( float $timeout )
 ```
 This method return while all query is finished or timeout occured. return true when all query completed, false otherwise. 
--MysqlAsync::addQueryEvent
+- MysqlAsync::addQueryEvent
 
 ```
 resource addQueryEvent ( resource $event_base , resource $event , string $sql [ , callable $callback , callable $error_callback , mysqli $link ] )
