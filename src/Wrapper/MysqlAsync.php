@@ -35,6 +35,10 @@ class MysqlAsync
     const DB_CONNECTION_IDLE = 0;
     const DB_CONNECTION_BUSY = 1;
     const TIMER_TICK = 0.01;
+    
+    const IDX_CALLBACK = 0;
+    const IDX_ERROR_CALLBACK = 1;
+    const IDX_EVENT = 2;
 
     public function __construct($host = null, $user = null, $password = null, $dbname = null, $port = null)
     {
@@ -58,7 +62,12 @@ class MysqlAsync
      * @param mysqli $db
      * @return mixed
      */
-    public function query($sql, $callback = null, $error_callback, $db = null)
+    public function query($sql, $callback = null, $error_callback = null, $db = null)
+    {
+    	return $this->_query($sql, $callback, $error_callback, $db);
+    }
+    
+	private function _query($sql, $callback = null, $error_callback = null, $db = null, $event = null)
     {
     	$db = empty($db) ? $this->_getDb() : $db;
     	if (!empty($callback) && !is_callable($callback)) {
@@ -67,7 +76,7 @@ class MysqlAsync
     	if (!empty($error_callback) && !is_callable($error_callback)) {
     		trigger_error("param callback is not callable", E_USER_ERROR);
     	}
-    	$this->_setCallback($db, $callback, $error_callback);
+    	$this->_setCallback($db, $callback, $error_callback, $event);
     	return $db->query($sql, MYSQLI_ASYNC);
     }
     
@@ -84,6 +93,33 @@ class MysqlAsync
     	}
     	$this->_setTimeout($timeout);
     	return $this->_loop();
+    }
+    
+    public function loopForEvent()
+    {
+    	$timeout = func_get_arg(2);
+    	$this->loop($timeout);
+    }
+    
+	/**
+	 * add asyncornous query event
+	 * 
+	 * @param event_base $event_base
+	 * @param event $event
+	 * @param string $sql
+	 * @param callable $callback
+	 * @param callable $error_callback
+	 * @param mysqli $link
+	 * @return null
+	 */
+    public function addQueryEvent($event_base, $event, $sql, $callback, $error_callback = null, $link = null)
+    {
+    	$link = $this->_getDb();
+    	$link_stream = mysql_async_get_socket($link);
+    	$this->_query($sql, $callback, $error_callback, $link, $event);
+    	event_set($event, mysql_async_get_socket($link), EV_READ, array($this, 'loopForEvent'), self::TIMER_TICK);
+    	event_base_set($event, $event_base);
+    	event_add($event);
     }
     
     /**
@@ -203,9 +239,13 @@ class MysqlAsync
      * @param callable $callback
      * @param callable $error_callback
      */
-    private function _setCallback($link, $callback, $error_callback)
+    private function _setCallback($link, $callback, $error_callback, $event)
     {
-        $this->_callback[$link] = array($callback, $error_callback);
+    	$this->_callback[$link] = array(
+    			self::IDX_CALLBACK => $callback,
+    			self::IDX_ERROR_CALLBACK => $error_callback,
+    			self::IDX_EVENT => $event
+    	);
         if (isset($this->_connection_pool[$link])) {
             $this->_connection_pool[$link] = self::DB_CONNECTION_BUSY;
         }
@@ -218,7 +258,10 @@ class MysqlAsync
     {
         $result = $link->reap_async_query();
         if ($result !== false) {
-            call_user_func($this->_callback[$link][0], $result);
+            call_user_func($this->_callback[$link][self::IDX_CALLBACK], $result);
+	    	if (!empty($this->_callback[$link][self::IDX_EVENT])) {
+	    		event_del($this->_callback[$link][self::IDX_EVENT]);
+	    	}
             unset($this->_callback[$link]);
             if (isset($this->_connection_pool[$link])) {
                 $this->_connection_pool[$link] = self::DB_CONNECTION_IDLE;
@@ -233,8 +276,11 @@ class MysqlAsync
      */
     private function _invokeErrorCallback($link)
     {
-        if (!empty($this->_callback[$link][1])) {
-            call_user_func($this->_callback[$link][1], $link->error, $link->errno);
+    	if (!empty($this->_callback[$link][self::IDX_EVENT])) {
+    		event_del($this->_callback[$link][self::IDX_EVENT]);
+    	}
+        if (!empty($this->_callback[$link][self::IDX_ERROR_CALLBACK])) {
+            call_user_func($this->_callback[$link][self::IDX_ERROR_CALLBACK], $link->error, $link->errno);
             unset($this->_callback[$link]);
             if (isset($this->_connection_pool[$link])) {
                 $this->_connection_pool[$link] = self::DB_CONNECTION_IDLE;
